@@ -122,15 +122,21 @@ def get_device_data():
         return {}
 
 def update_pump_status(status):
-    """Update pump status in Firebase"""
+    """Update pump status in Firebase and force disable Auto Mode for manual control."""
     try:
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
         
-        # Update device status
+        # 1. Update the pump status and mode to MANUAL
         db.child("devices").child(DEVICE_ID).child("actuators").child("pump").update({
             "status": status,
             "mode": "MANUAL",
             "lastChanged": timestamp
+        })
+        
+        # 2. **FIX FOR "ALWAYS ON" ISSUE:** Force the global autoMode setting to False.
+        # This ensures the physical device's automated logic stops overriding the manual command.
+        db.child("devices").child(DEVICE_ID).child("settings").update({
+            "autoMode": False 
         })
         
         # Log to history
