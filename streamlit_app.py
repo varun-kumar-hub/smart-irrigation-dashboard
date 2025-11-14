@@ -11,6 +11,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import datetime
 import json
+from zoneinfo import ZoneInfo
+
+# =====================================================
+# TIMEZONE CONFIGURATION
+# =====================================================
+IST = ZoneInfo("Asia/Kolkata")  # Indian Standard Time (Kolkata/Chennai)
 
 # =====================================================
 # FIREBASE CONFIGURATION
@@ -113,9 +119,10 @@ def signup(email, password):
         return None
 
 def log_current_reading_to_history(moisture, pump_status, pump_mode):
-    """Log current sensor reading to Firebase history"""
+    """Log current sensor reading to Firebase history with IST timezone"""
     try:
-        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+        # Get current time in IST
+        timestamp = datetime.datetime.now(IST).isoformat()
         
         # Log moisture reading
         db.child("history").child(DEVICE_ID).child("moisture").push({
@@ -154,9 +161,9 @@ def get_device_data():
         return {}
 
 def update_pump_status(status):
-    """Update pump status in Firebase"""
+    """Update pump status in Firebase with IST timezone"""
     try:
-        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+        timestamp = datetime.datetime.now(IST).isoformat()
         
         db.child("devices").child(DEVICE_ID).child("actuators").child("pump").update({
             "status": status,
@@ -198,14 +205,15 @@ def update_settings(auto_mode, threshold_low, threshold_high):
         return False
 
 def get_historical_data(data_type="moisture", hours=24):
-    """Fetch historical data from Firebase"""
+    """Fetch historical data from Firebase with IST timezone conversion"""
     try:
         data = db.child("history").child(DEVICE_ID).child(data_type).get().val()
         
         if not data:
             return []
         
-        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours)
+        # Calculate cutoff time in IST
+        cutoff = datetime.datetime.now(IST) - datetime.timedelta(hours=hours)
         records = []
         
         for key, val in data.items():
@@ -217,13 +225,24 @@ def get_historical_data(data_type="moisture", hours=24):
                 if not ts_str:
                     continue
                 
-                # Handle different timestamp formats
-                ts_str = ts_str.replace("Z", "+00:00")
+                # Parse timestamp and convert to IST
                 try:
+                    # Try parsing ISO format
                     ts = datetime.datetime.fromisoformat(ts_str)
+                    # Convert to IST if not already
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=IST)
+                    else:
+                        ts = ts.astimezone(IST)
                 except:
-                    # Try parsing as different format if needed
-                    ts = datetime.datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%S.%f%z")
+                    try:
+                        # Try parsing with Z suffix (UTC)
+                        ts_str_clean = ts_str.replace("Z", "+00:00")
+                        ts = datetime.datetime.fromisoformat(ts_str_clean)
+                        ts = ts.astimezone(IST)
+                    except:
+                        # Skip if can't parse
+                        continue
                 
                 if ts > cutoff:
                     record = {
@@ -268,7 +287,7 @@ def get_ai_recommendation(moisture, pump_status):
         return "🛑", "WARNING", "Soil saturated! Risk of overwatering. Stop pump!", "#9C27B0"
 
 def calculate_pump_runtime(pump_history):
-    """Calculate total pump runtime"""
+    """Calculate total pump runtime using IST timezone"""
     if not pump_history:
         return 0
     
@@ -285,8 +304,9 @@ def calculate_pump_runtime(pump_history):
             total_seconds += duration
             last_on_time = None
     
+    # If pump is currently on
     if last_on_time:
-        duration = (datetime.datetime.now(datetime.timezone.utc) - last_on_time).total_seconds()
+        duration = (datetime.datetime.now(IST) - last_on_time).total_seconds()
         total_seconds += duration
     
     return total_seconds
@@ -525,6 +545,10 @@ def dashboard_page():
     # MAIN DASHBOARD
     st.markdown("# 💧 Smart Irrigation Dashboard")
     
+    # Show current IST time
+    current_ist_time = datetime.datetime.now(IST).strftime("%d %B %Y, %I:%M:%S %p IST")
+    st.caption(f"🕐 Current Time: {current_ist_time}")
+    
     # Current Status
     col1, col2, col3, col4 = st.columns(4)
     
@@ -581,9 +605,9 @@ def dashboard_page():
                 # Show both moisture and pump activity
                 fig = make_subplots(
                     rows=2, cols=1,
-                    subplot_titles=("📊 Moisture Trend", "\n🚰 Pump Activity"),
+                    subplot_titles=("📊 Moisture Trend", "🚰 Pump Activity"),
                     row_heights=[0.6, 0.4],
-                    vertical_spacing=0.18
+                    vertical_spacing=0.15
                 )
                 
                 # Moisture plot - Highlight latest point
@@ -781,7 +805,7 @@ def dashboard_page():
                     
                     filename_prefix = "irrigation_data"
                 
-                timestamp_now = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                timestamp_now = datetime.datetime.now(IST).strftime('%Y%m%d_%H%M%S')
                 csv_data = export_df.to_csv(index=False)
                 
                 st.download_button(
