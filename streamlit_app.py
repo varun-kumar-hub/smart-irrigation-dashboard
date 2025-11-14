@@ -581,9 +581,9 @@ def dashboard_page():
                 # Show both moisture and pump activity
                 fig = make_subplots(
                     rows=2, cols=1,
-                    subplot_titles=("📊 Moisture Trend", "🚰 Pump Activity"),
+                    subplot_titles=("📊 Moisture Trend", "\n🚰 Pump Activity"),
                     row_heights=[0.6, 0.4],
-                    vertical_spacing=0.15
+                    vertical_spacing=0.18
                 )
                 
                 # Moisture plot - Highlight latest point
