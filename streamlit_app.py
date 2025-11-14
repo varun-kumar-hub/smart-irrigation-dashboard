@@ -491,7 +491,7 @@ def dashboard_page():
     # AI Recommendation
     icon, level, message, color = get_ai_recommendation(moisture, pump_status)
     st.markdown(f"""
-    <div style='background:{color}22;padding:15px;border-radius:10px;border-left:4px solid {color};'>
+    <div style='background:{color}22;padding:15px;border-radius:10px;border-left:4px solid {color};margin:5px;'>
         <h4 style='margin:0;color:{color};'>{icon} AI Recommendation</h4>
         <p style='margin:5px 0 0 0;'><strong>{level}</strong></p>
         <p style='margin:5px 0 0 0;font-size:0.9em;'>{message}</p>
