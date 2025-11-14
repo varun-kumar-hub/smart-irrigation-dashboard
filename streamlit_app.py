@@ -549,7 +549,7 @@ def dashboard_page():
                     rows=2, cols=1,
                     subplot_titles=("📊 Moisture Trend", "\n🚰 Pump Activity"),
                     row_heights=[0.6, 0.4],
-                    vertical_spacing=0.15
+                    vertical_spacing=0.3
                 )
                 
                 # Moisture plot
