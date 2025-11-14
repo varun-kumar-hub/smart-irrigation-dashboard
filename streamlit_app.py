@@ -453,7 +453,15 @@ def dashboard_page():
         
         st.markdown("---")
         
-        
+        # AI Recommendation
+        icon, level, message, color = get_ai_recommendation(moisture, pump_status)
+        st.markdown(f"""
+        <div style='background:{color}22;padding:15px;border-radius:10px;border-left:4px solid {color};'>
+            <h4 style='margin:0;color:{color};'>{icon} AI Recommendation</h4>
+            <p style='margin:5px 0 0 0;'><strong>{level}</strong></p>
+            <p style='margin:5px 0 0 0;font-size:0.9em;'>{message}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
     # MAIN DASHBOARD
     st.markdown("# 💧 Smart Irrigation Dashboard")
@@ -488,15 +496,7 @@ def dashboard_page():
                 st.rerun()
 
     st.markdown("---")
-    # AI Recommendation
-    icon, level, message, color = get_ai_recommendation(moisture, pump_status)
-    st.markdown(f"""
-    <div style='background:{color}22;padding:15px;border-radius:10px;border-left:4px solid {color};margin:5px;margin-bottom:20px;'>
-        <h4 style='margin:0;color:{color};font-size:x-large;'>{icon} AI Recommendation</h4>
-        <p style='margin:5px 0 0 0;font-size:large;'><strong>{level}</strong></p>
-        <p style='margin:5px 0 0 0;font-size:large;'>{message}</p>
-    </div>
-    """, unsafe_allow_html=True)
+
     # GRAPHS SECTION
     st.markdown("### 📈 Real-Time Data Analytics")
     
@@ -547,9 +547,9 @@ def dashboard_page():
                 # Show both moisture and pump activity
                 fig = make_subplots(
                     rows=2, cols=1,
-                    subplot_titles=("📊 Moisture Trend", "\n🚰 Pump Activity"),
+                    subplot_titles=("📊 Moisture Trend", "🚰 Pump Activity"),
                     row_heights=[0.6, 0.4],
-                    vertical_spacing=0.18
+                    vertical_spacing=0.15
                 )
                 
                 # Moisture plot
@@ -682,6 +682,80 @@ def dashboard_page():
                     st.metric("⏱ Pump Runtime", format_runtime(runtime))
                 else:
                     st.metric("⏱ Pump Runtime", "No data")
+            
+            # Download Section
+            st.markdown("---")
+            st.markdown("### 💾 Export Data")
+            
+            col_exp1, col_exp2, col_exp3 = st.columns([2, 1, 1])
+            
+            with col_exp1:
+                st.markdown("**Download irrigation data for analysis**")
+                data_type_export = st.radio(
+                    "Select data to export:",
+                    ["Moisture Data Only", "Pump Data Only", "Combined Data"],
+                    horizontal=True,
+                    key="export_type"
+                )
+            
+            with col_exp2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                # Prepare export data
+                if data_type_export == "Moisture Data Only":
+                    export_df = df_moisture.copy()
+                    export_df["timestamp"] = export_df["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
+                    export_df = export_df.rename(columns={"value": "moisture_percent"})
+                    filename_prefix = "moisture_data"
+                    
+                elif data_type_export == "Pump Data Only" and has_pump_data:
+                    df_pump_export = pd.DataFrame(pump_history)
+                    df_pump_export["timestamp"] = pd.to_datetime(df_pump_export["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S")
+                    export_df = df_pump_export[["timestamp", "value", "trigger"]]
+                    export_df = export_df.rename(columns={"value": "pump_status", "trigger": "control_mode"})
+                    filename_prefix = "pump_data"
+                    
+                else:  # Combined Data
+                    # Prepare moisture data
+                    moisture_export = df_moisture.copy()
+                    moisture_export["timestamp"] = moisture_export["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
+                    moisture_export = moisture_export.rename(columns={"value": "moisture_percent"})
+                    moisture_export["data_type"] = "moisture"
+                    
+                    # Prepare pump data
+                    if has_pump_data:
+                        pump_export = pd.DataFrame(pump_history)
+                        pump_export["timestamp"] = pd.to_datetime(pump_export["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S")
+                        pump_export = pump_export.rename(columns={"value": "pump_status"})
+                        pump_export["data_type"] = "pump"
+                        pump_export["moisture_percent"] = None
+                        
+                        # Combine both datasets
+                        export_df = pd.concat([
+                            moisture_export[["timestamp", "moisture_percent", "data_type"]],
+                            pump_export[["timestamp", "pump_status", "trigger", "data_type"]]
+                        ], ignore_index=True)
+                        export_df = export_df.sort_values("timestamp")
+                    else:
+                        export_df = moisture_export
+                    
+                    filename_prefix = "irrigation_data"
+                
+                timestamp_now = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                csv_data = export_df.to_csv(index=False)
+                
+                st.download_button(
+                    label="📥 Download CSV",
+                    data=csv_data,
+                    file_name=f"{filename_prefix}_{timestamp_now}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    type="primary"
+                )
+            
+            with col_exp3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.metric("📊 Total Records", len(export_df))
+                st.caption(f"Time Range: {time_range}")
         else:
             st.warning("⚠ No valid moisture data points found")
     else:
