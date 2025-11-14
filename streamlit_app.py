@@ -1,6 +1,6 @@
 """
 Smart Irrigation System - Enhanced Interactive Dashboard
-Real Firebase data version without sample data generation
+Fixed version with graph display issues resolved
 """
 
 import streamlit as st
@@ -166,9 +166,12 @@ def update_settings(auto_mode, threshold_low, threshold_high):
         return False
 
 def get_historical_data(data_type="moisture", hours=24):
-    """Fetch historical data from Firebase"""
+    """Fetch historical data - FIXED VERSION"""
     try:
         data = db.child("history").child(DEVICE_ID).child(data_type).get().val()
+        
+        # Debug output
+        st.write(f"Debug - Raw {data_type} data:", data)
         
         if not data:
             return []
@@ -200,13 +203,16 @@ def get_historical_data(data_type="moisture", hours=24):
                         **{k: v for k, v in val.items() if k not in ["timestamp", "value"]}
                     }
                     records.append(record)
-            except Exception:
+            except Exception as e:
+                st.write(f"Error parsing record: {e}, data: {val}")
                 continue
         
         sorted_records = sorted(records, key=lambda x: x["timestamp"])
+        st.write(f"Debug - Parsed {len(sorted_records)} {data_type} records")
         return sorted_records
         
-    except Exception:
+    except Exception as e:
+        st.error(f"Error in get_historical_data: {e}")
         return []
 
 def get_condition_from_moisture(moisture):
@@ -384,7 +390,7 @@ def login_page():
             st.rerun()
 
 def dashboard_page():
-    """Dashboard with real Firebase data"""
+    """Dashboard - FIXED VERSION"""
     if "user" not in st.session_state:
         st.warning("⚠ Please login first.")
         if st.button("Go to Login"):
@@ -392,7 +398,7 @@ def dashboard_page():
             st.rerun()
         return
 
-    # Auto-refresh every 5 seconds
+    # Auto-refresh
     count = st_autorefresh(interval=5000, key="refresh")
 
     # Fetch data
@@ -413,6 +419,7 @@ def dashboard_page():
     thresholds = settings_data.get("thresholds", {})
     threshold_low = thresholds.get("low", 30)
     threshold_high = thresholds.get("high", 70)
+    last_seen = info_data.get("lastSeen", "")
 
     # SIDEBAR
     with st.sidebar:
@@ -436,7 +443,7 @@ def dashboard_page():
                         st.success("✅ Settings saved!")
                         st.rerun()
         
-        with st.expander("📊 Display Options", expanded=True):
+        with st.expander("📊 Display Options", expanded=False):
             time_range = st.selectbox(
                 "History Range",
                 ["Last 1 Hour", "Last 6 Hours", "Last 12 Hours", "Last 24 Hours"],
@@ -450,18 +457,8 @@ def dashboard_page():
                 "Last 24 Hours": 24
             }
             selected_hours = hours_map[time_range]
-        
-        st.markdown("---")
-        
-        # AI Recommendation
-        icon, level, message, color = get_ai_recommendation(moisture, pump_status)
-        st.markdown(f"""
-        <div style='background:{color}22;padding:15px;border-radius:10px;border-left:4px solid {color};'>
-            <h4 style='margin:0;color:{color};'>{icon} AI Recommendation</h4>
-            <p style='margin:5px 0 0 0;'><strong>{level}</strong></p>
-            <p style='margin:5px 0 0 0;font-size:0.9em;'>{message}</p>
-        </div>
-        """, unsafe_allow_html=True)
+            
+            show_debug = st.checkbox("Show debug info", value=False)
 
     # MAIN DASHBOARD
     st.markdown("# 💧 Smart Irrigation Dashboard")
@@ -500,15 +497,18 @@ def dashboard_page():
     # GRAPHS SECTION
     st.markdown("### 📈 Historical Data")
     
-    # Fetch historical data
+    # Fetch historical data with debug info
+    if show_debug:
+        st.write("Fetching historical data...")
+    
     moisture_history = get_historical_data("moisture", selected_hours)
     pump_history = get_historical_data("pump", selected_hours)
     
-    # Check if we have data
-    has_moisture_data = moisture_history and len(moisture_history) > 0
-    has_pump_data = pump_history and len(pump_history) > 0
+    if show_debug:
+        st.write(f"Moisture records: {len(moisture_history)}")
+        st.write(f"Pump records: {len(pump_history)}")
     
-    if has_moisture_data:
+    if moisture_history and len(moisture_history) > 0:
         # Convert to DataFrame
         df_moisture = pd.DataFrame(moisture_history)
         
@@ -516,54 +516,51 @@ def dashboard_page():
         df_moisture["value"] = pd.to_numeric(df_moisture["value"], errors="coerce")
         df_moisture = df_moisture.dropna(subset=["value"])
         
+        if show_debug:
+            st.write("DataFrame shape:", df_moisture.shape)
+            st.write("DataFrame head:", df_moisture.head())
+        
         if not df_moisture.empty and len(df_moisture) > 0:
             # Create plots
-            if has_pump_data:
-                # Show both moisture and pump activity
-                fig = make_subplots(
-                    rows=2, cols=1,
-                    subplot_titles=("📊 Moisture Trend", "🚰 Pump Activity"),
-                    row_heights=[0.6, 0.4],
-                    vertical_spacing=0.15
-                )
-                
-                # Moisture plot
-                fig.add_trace(
-                    go.Scatter(
-                        x=df_moisture["timestamp"],
-                        y=df_moisture["value"],
-                        mode="lines+markers",
-                        name="Moisture",
-                        line=dict(color="#2E7D32", width=3),
-                        marker=dict(size=5),
-                        fill='tozeroy',
-                        fillcolor='rgba(46, 125, 50, 0.1)'
-                    ),
+            fig = make_subplots(
+                rows=2, cols=1,
+                subplot_titles=("Moisture Trend", "Pump Activity"),
+                row_heights=[0.6, 0.4],
+                vertical_spacing=0.15
+            )
+            
+            # Moisture plot
+            fig.add_trace(
+                go.Scatter(
+                    x=df_moisture["timestamp"],
+                    y=df_moisture["value"],
+                    mode="lines+markers",
+                    name="Moisture",
+                    line=dict(color="#2E7D32", width=2),
+                    marker=dict(size=4)
+                ),
+                row=1, col=1
+            )
+            
+            # Add threshold lines
+            if auto_mode:
+                fig.add_hline(
+                    y=threshold_low, 
+                    line_dash="dash", 
+                    line_color="red",
+                    annotation_text=f"Low ({threshold_low}%)",
                     row=1, col=1
                 )
-                
-                # Add threshold lines
-                if auto_mode:
-                    fig.add_hline(
-                        y=threshold_low, 
-                        line_dash="dash", 
-                        line_color="#F44336",
-                        line_width=2,
-                        annotation_text=f"Turn ON ({threshold_low}%)",
-                        annotation_position="right",
-                        row=1, col=1
-                    )
-                    fig.add_hline(
-                        y=threshold_high,
-                        line_dash="dash",
-                        line_color="#2196F3",
-                        line_width=2,
-                        annotation_text=f"Turn OFF ({threshold_high}%)",
-                        annotation_position="right",
-                        row=1, col=1
-                    )
-                
-                # Pump activity
+                fig.add_hline(
+                    y=threshold_high,
+                    line_dash="dash",
+                    line_color="blue",
+                    annotation_text=f"High ({threshold_high}%)",
+                    row=1, col=1
+                )
+            
+            # Pump activity
+            if pump_history and len(pump_history) > 0:
                 df_pump = pd.DataFrame(pump_history)
                 df_pump["status_num"] = df_pump["value"].apply(lambda x: 1 if x == "ON" else 0)
                 
@@ -572,72 +569,29 @@ def dashboard_page():
                         x=df_pump["timestamp"],
                         y=df_pump["status_num"],
                         mode="markers+lines",
-                        name="Pump Status",
+                        name="Pump",
                         line=dict(color="#1976D2", width=2, shape='hv'),
-                        marker=dict(size=8, color='#1976D2')
+                        marker=dict(size=8)
                     ),
                     row=2, col=1
                 )
-                
-                # Update axes
-                fig.update_xaxes(title_text="Time", row=1, col=1)
-                fig.update_yaxes(title_text="Moisture (%)", row=1, col=1)
-                fig.update_xaxes(title_text="Time", row=2, col=1)
-                fig.update_yaxes(
-                    title_text="Status",
-                    ticktext=["OFF", "ON"],
-                    tickvals=[0, 1],
-                    row=2, col=1
-                )
-                
-                fig.update_layout(
-                    height=700,
-                    showlegend=True,
-                    hovermode="x unified"
-                )
-            else:
-                # Show only moisture data
-                fig = go.Figure()
-                
-                fig.add_trace(
-                    go.Scatter(
-                        x=df_moisture["timestamp"],
-                        y=df_moisture["value"],
-                        mode="lines+markers",
-                        name="Moisture Level",
-                        line=dict(color="#2E7D32", width=3),
-                        marker=dict(size=5),
-                        fill='tozeroy',
-                        fillcolor='rgba(46, 125, 50, 0.1)'
-                    )
-                )
-                
-                # Add threshold lines
-                if auto_mode:
-                    fig.add_hline(
-                        y=threshold_low,
-                        line_dash="dash",
-                        line_color="#F44336",
-                        line_width=2,
-                        annotation_text=f"Turn ON ({threshold_low}%)",
-                        annotation_position="right"
-                    )
-                    fig.add_hline(
-                        y=threshold_high,
-                        line_dash="dash",
-                        line_color="#2196F3",
-                        line_width=2,
-                        annotation_text=f"Turn OFF ({threshold_high}%)",
-                        annotation_position="right"
-                    )
-                
-                fig.update_layout(
-                    title="📊 Soil Moisture Trend",
-                    xaxis_title="Time",
-                    yaxis_title="Moisture (%)",
-                    height=500,
-                    hovermode="x unified"
-                )
+            
+            # Update layout
+            fig.update_xaxes(title_text="Time", row=1, col=1)
+            fig.update_yaxes(title_text="Moisture (%)", row=1, col=1)
+            fig.update_xaxes(title_text="Time", row=2, col=1)
+            fig.update_yaxes(
+                title_text="Status",
+                ticktext=["OFF", "ON"],
+                tickvals=[0, 1],
+                row=2, col=1
+            )
+            
+            fig.update_layout(
+                height=700,
+                showlegend=True,
+                hovermode="x unified"
+            )
             
             st.plotly_chart(fig, use_container_width=True)
             
@@ -646,78 +600,35 @@ def dashboard_page():
             col_s1, col_s2, col_s3, col_s4 = st.columns(4)
             
             with col_s1:
-                st.metric("📊 Average", f"{df_moisture['value'].mean():.1f}%")
+                st.metric("Average", f"{df_moisture['value'].mean():.1f}%")
             with col_s2:
-                st.metric("📉 Minimum", f"{df_moisture['value'].min():.1f}%")
+                st.metric("Minimum", f"{df_moisture['value'].min():.1f}%")
             with col_s3:
-                st.metric("📈 Maximum", f"{df_moisture['value'].max():.1f}%")
+                st.metric("Maximum", f"{df_moisture['value'].max():.1f}%")
             with col_s4:
-                if has_pump_data:
-                    runtime = calculate_pump_runtime(pump_history)
-                    st.metric("⏱ Pump Runtime", format_runtime(runtime))
-                else:
-                    st.metric("⏱ Pump Runtime", "No data")
+                runtime = calculate_pump_runtime(pump_history)
+                st.metric("Pump Runtime", format_runtime(runtime))
         else:
-            st.warning("⚠ No valid moisture data points found")
+            st.warning("No valid data points after processing")
     else:
         st.info(f"""
-        📊 **No moisture history data available for {time_range.lower()}**
+        📊 No historical data available for the selected time range ({time_range}).
         
-        Your ESP32/Arduino device needs to log moisture readings to Firebase at:
-        ```
-        history/{DEVICE_ID}/moisture/
-        ```
+        **Possible reasons:**
+        - The system hasn't collected data yet
+        - No data in the selected time window
+        - Database connection issue
         
-        **Data Status:**
-        - Current moisture: **{moisture}%** (live sensor reading)
-        - Pump history: {len(pump_history)} records found
-        - Moisture history: 0 records found
-        
-        Make sure your device is logging moisture data to the history path.
+        Data will appear automatically as the system collects readings.
         """)
         
-        # Show pump activity only if available
-        if has_pump_data:
-            st.markdown("### 🚰 Pump Activity")
-            
-            df_pump = pd.DataFrame(pump_history)
-            df_pump["status_num"] = df_pump["value"].apply(lambda x: 1 if x == "ON" else 0)
-            
-            fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=df_pump["timestamp"],
-                    y=df_pump["status_num"],
-                    mode="markers+lines",
-                    name="Pump Status",
-                    line=dict(color="#1976D2", width=2, shape='hv'),
-                    marker=dict(size=8, color='#1976D2')
-                )
-            )
-            
-            fig.update_layout(
-                xaxis_title="Time",
-                yaxis_title="Status",
-                yaxis=dict(
-                    ticktext=["OFF", "ON"],
-                    tickvals=[0, 1]
-                ),
-                height=400,
-                hovermode="x unified"
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Pump runtime stats
-            runtime = calculate_pump_runtime(pump_history)
-            st.metric("⏱ Total Pump Runtime", format_runtime(runtime))
-
-    # Logout button at bottom
-    st.markdown("---")
-    if st.button("🚪 Logout", type="secondary"):
-        del st.session_state.user
-        st.session_state.page = "home"
-        st.rerun()
+        if show_debug:
+            st.write("Debug: Checking database structure...")
+            try:
+                all_history = db.child("history").child(DEVICE_ID).get().val()
+                st.write("All history data:", all_history)
+            except Exception as e:
+                st.error(f"Debug error: {e}")
 
 # =====================================================
 # APPLICATION ROUTER
