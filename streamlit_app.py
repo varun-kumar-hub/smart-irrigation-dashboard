@@ -112,6 +112,38 @@ def signup(email, password):
             st.error(f"❌ Sign-up failed: {error_msg}")
         return None
 
+def log_current_reading_to_history(moisture, pump_status, pump_mode):
+    """Log current sensor reading to Firebase history"""
+    try:
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+        
+        # Log moisture reading
+        db.child("history").child(DEVICE_ID).child("moisture").push({
+            "value": int(moisture),
+            "timestamp": timestamp
+        })
+        
+        # Log pump status
+        db.child("history").child(DEVICE_ID).child("pump").push({
+            "value": pump_status,
+            "trigger": pump_mode,
+            "timestamp": timestamp
+        })
+        
+        return True
+    except Exception as e:
+        # Silent fail - don't disrupt dashboard
+        return False
+
+def clear_history_data():
+    """Clear all historical data from Firebase"""
+    try:
+        db.child("history").child(DEVICE_ID).remove()
+        return True
+    except Exception as e:
+        st.error(f"❌ Failed to clear history: {e}")
+        return False
+
 def get_device_data():
     """Fetch complete device data"""
     try:
@@ -453,7 +485,42 @@ def dashboard_page():
         
         st.markdown("---")
         
+        # Data Management Section
+        st.markdown("### 🗑️ Data Management")
         
+        if st.button("🧹 Clear Old History", use_container_width=True, type="secondary"):
+            if "confirm_clear" not in st.session_state:
+                st.session_state.confirm_clear = False
+            
+            if not st.session_state.confirm_clear:
+                st.session_state.confirm_clear = True
+                st.warning("⚠️ Click again to confirm deletion")
+            else:
+                with st.spinner("Clearing history..."):
+                    if clear_history_data():
+                        st.success("✅ History cleared! Fresh data will start logging.")
+                        st.session_state.confirm_clear = False
+                        st.rerun()
+        
+        if st.session_state.get("confirm_clear", False):
+            if st.button("❌ Cancel", use_container_width=True):
+                st.session_state.confirm_clear = False
+                st.rerun()
+        
+        st.caption("⚠️ This will delete all historical data and start fresh logging")
+        
+        st.markdown("---")
+    
+    # Log current reading to history every refresh (every 5 seconds)
+    log_current_reading_to_history(moisture, pump_status, pump_mode)# AI Recommendation
+    icon, level, message, color = get_ai_recommendation(moisture, pump_status)
+    st.markdown(f"""
+    <div style='background:{color}22;padding:15px;border-radius:10px;border-left:4px solid {color};'>
+        <h4 style='margin:0;color:{color};'>{icon} AI Recommendation</h4>
+        <p style='margin:5px 0 0 0;'><strong>{level}</strong></p>
+        <p style='margin:5px 0 0 0;font-size:0.9em;'>{message}</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     # MAIN DASHBOARD
     st.markdown("# 💧 Smart Irrigation Dashboard")
@@ -488,46 +555,13 @@ def dashboard_page():
                 st.rerun()
 
     st.markdown("---")
-    # AI Recommendation
-    icon, level, message, color = get_ai_recommendation(moisture, pump_status)
-    st.markdown(f"""
-    <div style='background:{color}22;padding:15px;border-radius:10px;border-left:4px solid {color};margin-bottom:20px;'>
-        <h4 style='margin:0;color:{color};'>{icon} AI Recommendation</h4>
-        <p style='margin:5px 0 0 0;font-size:large'><strong>{level}</strong></p>
-        <p style='margin:5px 0 0 0;font-size:large;'>{message}</p>
-    </div>
-    """, unsafe_allow_html=True)
+
     # GRAPHS SECTION
     st.markdown("### 📈 Real-Time Data Analytics")
     
-    # Fetch historical data
+    # Fetch historical data (now includes freshly logged readings)
     moisture_history = get_historical_data("moisture", selected_hours)
     pump_history = get_historical_data("pump", selected_hours)
-    
-    # Add current live reading to moisture history for real-time graph update
-    current_time = datetime.datetime.now(datetime.timezone.utc)
-    current_moisture_record = {
-        "timestamp": current_time,
-        "value": moisture
-    }
-    
-    # Combine historical + current reading
-    if moisture_history:
-        moisture_history.append(current_moisture_record)
-    else:
-        moisture_history = [current_moisture_record]
-    
-    # Add current pump status to pump history
-    current_pump_record = {
-        "timestamp": current_time,
-        "value": pump_status,
-        "trigger": pump_mode
-    }
-    
-    if pump_history:
-        pump_history.append(current_pump_record)
-    else:
-        pump_history = [current_pump_record]
     
     # Check if we have data
     has_moisture_data = moisture_history and len(moisture_history) > 0
@@ -552,7 +586,10 @@ def dashboard_page():
                     vertical_spacing=0.15
                 )
                 
-                # Moisture plot
+                # Moisture plot - Highlight latest point
+                marker_sizes = [5] * (len(df_moisture) - 1) + [12]  # Make last point bigger
+                marker_colors = ['#2E7D32'] * (len(df_moisture) - 1) + ['#FF4081']  # Make last point pink
+                
                 fig.add_trace(
                     go.Scatter(
                         x=df_moisture["timestamp"],
@@ -560,9 +597,10 @@ def dashboard_page():
                         mode="lines+markers",
                         name="Moisture",
                         line=dict(color="#2E7D32", width=3),
-                        marker=dict(size=5),
+                        marker=dict(size=marker_sizes, color=marker_colors, line=dict(width=2, color='white')),
                         fill='tozeroy',
-                        fillcolor='rgba(46, 125, 50, 0.1)'
+                        fillcolor='rgba(46, 125, 50, 0.1)',
+                        hovertemplate="<b>%{y:.1f}%</b><br>%{x}<extra></extra>"
                     ),
                     row=1, col=1
                 )
@@ -588,9 +626,11 @@ def dashboard_page():
                         row=1, col=1
                     )
                 
-                # Pump activity
+                # Pump activity - Highlight latest point
                 df_pump = pd.DataFrame(pump_history)
                 df_pump["status_num"] = df_pump["value"].apply(lambda x: 1 if x == "ON" else 0)
+                
+                pump_marker_sizes = [8] * (len(df_pump) - 1) + [15]  # Make last point bigger
                 
                 fig.add_trace(
                     go.Scatter(
@@ -599,7 +639,8 @@ def dashboard_page():
                         mode="markers+lines",
                         name="Pump Status",
                         line=dict(color="#1976D2", width=2, shape='hv'),
-                        marker=dict(size=8, color='#1976D2')
+                        marker=dict(size=pump_marker_sizes, color='#1976D2', line=dict(width=2, color='white')),
+                        hovertemplate="<b>%{y}</b><br>%{x}<extra></extra>"
                     ),
                     row=2, col=1
                 )
