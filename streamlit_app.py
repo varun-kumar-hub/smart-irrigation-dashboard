@@ -1,6 +1,6 @@
 """
 Smart Irrigation System - Enhanced Interactive Dashboard
-Fixed version with graph display issues resolved
+Real Firebase data version without sample data generation
 """
 
 import streamlit as st
@@ -166,7 +166,7 @@ def update_settings(auto_mode, threshold_low, threshold_high):
         return False
 
 def get_historical_data(data_type="moisture", hours=24):
-    """Fetch historical data - FIXED VERSION"""
+    """Fetch historical data from Firebase"""
     try:
         data = db.child("history").child(DEVICE_ID).child(data_type).get().val()
         
@@ -208,34 +208,6 @@ def get_historical_data(data_type="moisture", hours=24):
         
     except Exception:
         return []
-
-def generate_sample_moisture_data():
-    """Generate sample moisture data for testing (last 24 hours)"""
-    try:
-        now = datetime.datetime.now(datetime.timezone.utc)
-        
-        # Generate 48 data points (one every 30 minutes for 24 hours)
-        for i in range(48):
-            timestamp = now - datetime.timedelta(minutes=30 * (48 - i))
-            
-            # Simulate realistic moisture pattern
-            # Start at 70%, gradually decrease, spike when pump runs
-            base_moisture = 70 - (i * 0.8)  # Gradual decrease
-            
-            # Add some random variation
-            import random
-            moisture = max(15, min(85, base_moisture + random.uniform(-5, 5)))
-            
-            # Push to Firebase
-            db.child("history").child(DEVICE_ID).child("moisture").push({
-                "value": int(moisture),
-                "timestamp": timestamp.isoformat().replace("+00:00", "Z")
-            })
-        
-        return True
-    except Exception as e:
-        st.error(f"Error generating data: {e}")
-        return False
 
 def get_condition_from_moisture(moisture):
     """Determine soil condition"""
@@ -412,7 +384,7 @@ def login_page():
             st.rerun()
 
 def dashboard_page():
-    """Dashboard - FIXED VERSION"""
+    """Dashboard with real Firebase data"""
     if "user" not in st.session_state:
         st.warning("⚠ Please login first.")
         if st.button("Go to Login"):
@@ -420,7 +392,7 @@ def dashboard_page():
             st.rerun()
         return
 
-    # Auto-refresh
+    # Auto-refresh every 5 seconds
     count = st_autorefresh(interval=5000, key="refresh")
 
     # Fetch data
@@ -441,7 +413,6 @@ def dashboard_page():
     thresholds = settings_data.get("thresholds", {})
     threshold_low = thresholds.get("low", 30)
     threshold_high = thresholds.get("high", 70)
-    last_seen = info_data.get("lastSeen", "")
 
     # SIDEBAR
     with st.sidebar:
@@ -465,7 +436,7 @@ def dashboard_page():
                         st.success("✅ Settings saved!")
                         st.rerun()
         
-        with st.expander("📊 Display Options", expanded=False):
+        with st.expander("📊 Display Options", expanded=True):
             time_range = st.selectbox(
                 "History Range",
                 ["Last 1 Hour", "Last 6 Hours", "Last 12 Hours", "Last 24 Hours"],
@@ -481,14 +452,16 @@ def dashboard_page():
             selected_hours = hours_map[time_range]
         
         st.markdown("---")
-        st.markdown("### 🧪 Testing Tools")
         
-        if st.button("📊 Generate Sample Data", use_container_width=True):
-            with st.spinner("Generating 24 hours of sample moisture data..."):
-                if generate_sample_moisture_data():
-                    st.success("✅ Sample data created!")
-                    st.info("Refresh the page to see the graphs")
-                    st.rerun()
+        # AI Recommendation
+        icon, level, message, color = get_ai_recommendation(moisture, pump_status)
+        st.markdown(f"""
+        <div style='background:{color}22;padding:15px;border-radius:10px;border-left:4px solid {color};'>
+            <h4 style='margin:0;color:{color};'>{icon} AI Recommendation</h4>
+            <p style='margin:5px 0 0 0;'><strong>{level}</strong></p>
+            <p style='margin:5px 0 0 0;font-size:0.9em;'>{message}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
     # MAIN DASHBOARD
     st.markdown("# 💧 Smart Irrigation Dashboard")
@@ -531,7 +504,7 @@ def dashboard_page():
     moisture_history = get_historical_data("moisture", selected_hours)
     pump_history = get_historical_data("pump", selected_hours)
     
-    # Check if we have moisture data
+    # Check if we have data
     has_moisture_data = moisture_history and len(moisture_history) > 0
     has_pump_data = pump_history and len(pump_history) > 0
     
@@ -685,31 +658,27 @@ def dashboard_page():
                 else:
                     st.metric("⏱ Pump Runtime", "No data")
         else:
-            st.warning("⚠ No valid data points after processing")
+            st.warning("⚠ No valid moisture data points found")
     else:
-        # No moisture data available
         st.info(f"""
-        📊 **No moisture history data found**
+        📊 **No moisture history data available for {time_range.lower()}**
         
-        Your Firebase has pump activity records but no moisture sensor readings logged to history.
+        Your ESP32/Arduino device needs to log moisture readings to Firebase at:
+        ```
+        history/{DEVICE_ID}/moisture/
+        ```
         
-        **To see graphs, you need to:**
-        1. Click the "📊 Generate Sample Data" button in the sidebar (Testing Tools section)
-        2. OR configure your ESP32/Arduino to log moisture readings to:
-           ```
-           history/device_001/moisture/
-           ```
+        **Data Status:**
+        - Current moisture: **{moisture}%** (live sensor reading)
+        - Pump history: {len(pump_history)} records found
+        - Moisture history: 0 records found
         
-        **Current data structure:**
-        - ✅ Pump history: {len(pump_history)} records found
-        - ❌ Moisture history: 0 records found
-        
-        The system shows current moisture as **{moisture}%** but this isn't being logged to history.
+        Make sure your device is logging moisture data to the history path.
         """)
         
         # Show pump activity only if available
         if has_pump_data:
-            st.markdown("### 🚰 Pump Activity (Available Data)")
+            st.markdown("### 🚰 Pump Activity")
             
             df_pump = pd.DataFrame(pump_history)
             df_pump["status_num"] = df_pump["value"].apply(lambda x: 1 if x == "ON" else 0)
@@ -741,8 +710,14 @@ def dashboard_page():
             
             # Pump runtime stats
             runtime = calculate_pump_runtime(pump_history)
-            st.metric("⏱ Total Pump Runtime", format_runtime(runtime), 
-                     delta=f"Last {time_range.lower()}")
+            st.metric("⏱ Total Pump Runtime", format_runtime(runtime))
+
+    # Logout button at bottom
+    st.markdown("---")
+    if st.button("🚪 Logout", type="secondary"):
+        del st.session_state.user
+        st.session_state.page = "home"
+        st.rerun()
 
 # =====================================================
 # APPLICATION ROUTER
